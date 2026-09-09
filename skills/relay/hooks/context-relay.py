@@ -10,12 +10,33 @@ from pathlib import Path
 
 CHECK_INTERVAL = 45
 WARN_INTERVAL = 300
-def threshold_percent():
+DEFAULT_TOKENS = 200000
+
+
+def _positive_float(raw):
     try:
-        value = float(os.environ.get("CONTEXT_RELAY_PERCENT", "20"))
-    except ValueError:
-        return 20.0
-    return value if math.isfinite(value) else 20.0
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(value) or value <= 0:
+        return None
+    return value
+
+
+def threshold():
+    """Return (kind, value).
+
+    Tokens are the default. A token budget means the same amount of work on
+    every window size, so a 200k window and a 1M window warn at the same
+    point. Percent stays available as an override for anyone who wants it.
+    """
+    percent = os.environ.get("CONTEXT_RELAY_PERCENT")
+    if percent is not None:
+        value = _positive_float(percent)
+        if value is not None:
+            return "percent", value
+    value = _positive_float(os.environ.get("CONTEXT_RELAY_TOKENS"))
+    return "tokens", value if value is not None else float(DEFAULT_TOKENS)
 def state_path(session_id):
     if not session_id:
         return None
@@ -38,14 +59,18 @@ def save_state(handle, state):
     json.dump(state, handle)
     handle.flush()
 
-def context_percent(payload):
+def context_usage(payload):
+    # Always pin context-axi to THIS session. Never fall back to --cwd:
+    # cwd mode picks the newest transcript in the directory, which can be a
+    # different session, so one session reads another session's usage and
+    # relays at the wrong time.
     transcript = payload.get("transcript_path")
-    cwd = payload.get("cwd")
+    session_id = payload.get("session_id")
     command = ["context-axi"]
     if transcript:
         command += ["--transcript", str(transcript)]
-    elif cwd:
-        command += ["--cwd", str(cwd)]
+    elif session_id:
+        command += ["--session", str(session_id)]
     else:
         return None
     command.append("--json")
@@ -58,10 +83,19 @@ def context_percent(payload):
         data = json.loads(result.stdout)
     except (OSError, subprocess.SubprocessError, ValueError):
         return None
-    percent = data.get("percentUsed") if isinstance(data, dict) else None
-    if isinstance(percent, bool) or not isinstance(percent, (int, float)):
+    if not isinstance(data, dict):
         return None
-    return float(percent) if math.isfinite(percent) else None
+    return {
+        "percent": _number(data.get("percentUsed")),
+        "tokens": _number(data.get("tokensUsed")),
+        "window": _number(data.get("window")),
+    }
+
+
+def _number(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if math.isfinite(value) else None
 
 def display_number(value):
     return f"{value:g}"
@@ -90,9 +124,10 @@ def run():
         state.setdefault("warn_count", 0)
         state["last_check_time"] = now
         save_state(handle, state)
-        percent = context_percent(payload)
-        threshold = threshold_percent()
-        if percent is None or percent < threshold:
+        usage = context_usage(payload)
+        kind, limit = threshold()
+        used = None if usage is None else usage.get(kind)
+        if used is None or used < limit:
             return
         last_warn = state.get("last_warn_time", 0)
         if isinstance(last_warn, (int, float)) and now - last_warn < WARN_INTERVAL:
@@ -101,9 +136,20 @@ def run():
         count = state.get("warn_count", 0)
         state["warn_count"] = count + 1 if isinstance(count, int) else 1
         save_state(handle, state)
+    if kind == "tokens":
+        window = usage.get("window")
+        room = "" if window is None else f" of a {display_number(window)} token window"
+        state_text = (
+            f"context has used {display_number(used)} tokens{room} "
+            f"(threshold {display_number(limit)} tokens)"
+        )
+    else:
+        state_text = (
+            f"context is at {display_number(used)} percent "
+            f"(threshold {display_number(limit)} percent)"
+        )
     message = (
-        f"CONTEXT RELAY: context is at {display_number(percent)} percent "
-        f"(threshold {display_number(threshold)}). Finish the current step, do not "
+        f"CONTEXT RELAY: {state_text}. Finish the current step, do not "
         "start a new task, then run the relay skill (/relay) to hand this session "
         "to a fresh agent. Carry every agent, pane and watcher you manage in the handoff."
     )
