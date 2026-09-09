@@ -1,6 +1,6 @@
 ---
 name: relay
-description: "Hand this session off to a fresh Claude agent in a new Herdr pane. Splits a pane next to you, runs danger with your model, writes a handoff doc that carries the work state plus every agent or pane you are managing, and asks the successor to close your pane. Use when the user invokes /relay or asks to hand off, relay, pass the baton, or free up context by moving to a fresh agent. Requires HERDR_ENV=1."
+description: "Hand this session off to a fresh Claude agent in a new Herdr pane. Splits a pane next to you, runs a fresh agent on your model, writes a handoff doc that carries the work state plus every agent or pane you are managing, and asks the successor to close your pane. Use when the user invokes /relay or asks to hand off, relay, pass the baton, or free up context by moving to a fresh agent. Requires HERDR_ENV=1."
 argument-hint: "[optional: model to use, and what the successor should focus on]"
 ---
 
@@ -45,7 +45,7 @@ Also collect, for each fleet member: agent name, kind, pane ID, working director
 you asked it to do, its current state, and what the successor must do with it next
 (wait, read output, re-prompt, close).
 
-## 3. Pick the model
+## 3. Pick the model and the launch command
 
 Default: the successor runs the same model you are running. Use the exact model ID from
 your environment description.
@@ -53,15 +53,41 @@ your environment description.
 If the user named a model in the skill arguments, use that instead. Accept plain family
 names too and map them to the CLI value: `opus`, `sonnet`, `haiku`.
 
-Build the command:
+### The launch command
+
+The successor must start without permission prompts. Nobody is there to answer them.
+
+Default to the written command:
 
 ```
-danger --model <model>
+claude --dangerously-skip-permissions --model <model>
 ```
 
-`danger` is the user's fish function for `claude --dangerously-skip-permissions`, with
-folder trust pre-accepted for the current directory. Always use `danger`, never plain
-`claude`.
+For a Codex successor:
+
+```
+codex --dangerously-bypass-approvals-and-sandbox --model <model>
+```
+
+### Optional local shortcuts
+
+Some setups define shell shortcuts for the same thing. Use one only if it exists:
+
+```bash
+type -q danger    # fish, else: command -v danger
+type -q cdanger
+```
+
+- `danger` wraps `claude --dangerously-skip-permissions` and also pre-accepts the
+  folder-trust dialog for the current directory.
+- `cdanger` wraps the Codex command with a default model and effort.
+
+If `danger` exists, prefer it. It handles folder trust, which the plain command does
+not. If it does not exist, use the written command and read the pane in step 6. A
+first run in an untrusted folder can stop on a trust prompt. Answer it through
+`herdr pane send-keys`, then carry on.
+
+Do not assume a shortcut is there. Check first.
 
 ## 4. Write the handoff document
 
@@ -108,7 +134,7 @@ Read the new pane ID from `.result.pane.pane_id`.
 ## 6. Start the agent
 
 ```bash
-herdr pane run <new-pane-id> "danger --model <model>"
+herdr pane run <new-pane-id> "<launch command from step 3>"
 ```
 
 Then wait for Herdr to recognize the agent. Poll, do not sleep blindly:
