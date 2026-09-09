@@ -89,6 +89,9 @@ first run in an untrusted folder can stop on a trust prompt. Answer it through
 
 Do not assume a shortcut is there. Check first.
 
+`README.md` in this folder explains the folder-trust pre-accept and how to match
+whatever the machine already uses. Read it before your first relay on a new machine.
+
 ## 4. Write the handoff document
 
 Path:
