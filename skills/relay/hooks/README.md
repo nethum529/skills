@@ -64,8 +64,7 @@ The hook keeps state per session in `~/.local/state/context-relay/`, one file pe
 session ID. Two sessions never share a timer or a warning count.
 
 The hook also pins `context-axi` to the current session. It passes `--transcript`,
-or `--session` if there is no transcript path. It never uses `--cwd`. See issue
-about cross-session reads: `--cwd` mode picks the newest transcript in the folder,
+or `--session` if there is no transcript path. It never uses `--cwd`. See issue #1: `--cwd` mode picks the newest transcript in the folder,
 so a quiet session can read a busy session's number and relay for no reason.
 
 ## How it works
